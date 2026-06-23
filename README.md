@@ -7,9 +7,11 @@ mp4 TBA
 ## About
 
 A CLI Pomodoro timer that streams YouTube music through your work sessions.
+
+
 The timer runs as a background daemon so it keeps ticking across terminal
 sessions. Music plays during work, pauses automatically on breaks, and resumes
-when you get back to work -- no manual intervention needed.
+when you get back to work.
 
 Notifications fire at every session boundary via whatever is available in your
 environment (Windows toast via msg.exe, Linux desktop via notify-send, or a
@@ -18,10 +20,10 @@ terminal bell as a fallback).
 ## Prerequisites
 
 - Python 3.10+
-- [mpv](https://mpv.io/) -- handles audio playback
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) -- streams YouTube URLs
+- [mpv](https://mpv.io/) - handles audio playback
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) - streams YouTube URLs
 
-**WSL2 (Windows Subsystem for Linux):** install the Windows builds of both mpv
+**WSL2 (Windows Subsystem for Linux):** Install the Windows builds of both mpv
 and yt-dlp rather than the Linux ones. The Linux audio pipeline in WSL routes
 through an RDP channel, which causes noticeable audio degradation. The Windows
 builds use WASAPI directly and are detected automatically.
