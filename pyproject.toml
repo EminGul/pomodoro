@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=42"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pomodoro"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "click>=8.1",
+]
+
+[project.scripts]
+pomodoro = "pomodoro.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
