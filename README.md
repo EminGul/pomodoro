@@ -93,7 +93,7 @@ pomodoro volume 80                  # set volume (0-100)
 ## TODO
 
 - [x] ~~Better editing for pomodoro intervals (`pomodoro config show` / `pomodoro config set <key> <value>`, changes apply at next session boundary or immediately via `pomodoro restart`)~~
-- [ ] Live status watch (`pomodoro status --watch` that redraws in place)
+- [x] ~~Live status watch (`pomodoro status --watch` that redraws in place)~~
 - [ ] Better playlist editing and support for multiple named playlists
 - [ ] Sound notifications (short chime on session end, alongside existing
       visual/bell notifications)

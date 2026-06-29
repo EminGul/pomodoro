@@ -133,8 +133,26 @@ def resume() -> None:
         click.echo("Daemon not running.", err=True)
 
 
+def _render_status(state: dict) -> list[str]:
+    stype = state["session_type"].replace("_", " ").title()
+    remaining = _fmt_time(state["seconds_remaining"])
+    music = "yes" if state["music_playing"] else "no"
+    done = state["total_work_sessions"]
+    paused = state.get("paused", False)
+    lines = [
+        f"Session:   {stype}{' (paused)' if paused else ''}",
+        f"Remaining: {remaining}",
+        f"Music:     {music}",
+        f"Completed: {done} work session(s)",
+    ]
+    if not state.get("mpv_available", True):
+        lines.append("Warning:   mpv not found -- music disabled (install mpv)")
+    return lines
+
+
 @main.command()
-def status() -> None:
+@click.option("--watch", is_flag=True, default=False, help="Redraw in place every second.")
+def status(watch: bool) -> None:
     """Show current session and time remaining."""
     if not _daemon_running():
         click.echo("Daemon not running.")
@@ -145,17 +163,28 @@ def status() -> None:
         click.echo("No state available.")
         return
 
-    stype = state["session_type"].replace("_", " ").title()
-    remaining = _fmt_time(state["seconds_remaining"])
-    music = "yes" if state["music_playing"] else "no"
-    done = state["total_work_sessions"]
-    paused = state.get("paused", False)
-    click.echo(f"Session:   {stype}{' (paused)' if paused else ''}")
-    click.echo(f"Remaining: {remaining}")
-    click.echo(f"Music:     {music}")
-    click.echo(f"Completed: {done} work session(s)")
-    if not state.get("mpv_available", True):
-        click.echo("Warning:   mpv not found -- music is disabled. Install with: sudo apt install mpv", err=True)
+    if not watch:
+        for line in _render_status(state):
+            click.echo(line)
+        return
+
+    prev_line_count = 0
+    try:
+        while True:
+            if prev_line_count:
+                sys.stdout.write(f"\033[{prev_line_count}A\r\033[J")
+                sys.stdout.flush()
+            lines = _render_status(state)
+            for line in lines:
+                click.echo(line)
+            prev_line_count = len(lines)
+            time.sleep(1)
+            if not _daemon_running():
+                click.echo("Daemon not running.")
+                return
+            state = read_state() or state
+    except KeyboardInterrupt:
+        click.echo("")
 
 
 @main.group()
