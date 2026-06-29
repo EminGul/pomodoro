@@ -63,6 +63,7 @@ class Daemon:
         write_state(self._state, self._player.is_playing, self._player.mpv_available, self._paused)
 
     def _end_session(self) -> None:
+        self._config = Config.load()
         stype = self._state.session_type
         if stype == SessionType.WORK:
             self._notifier.send("Pomodoro complete", "Time for a break.")

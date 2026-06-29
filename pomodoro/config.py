@@ -11,7 +11,7 @@ PRESETS: dict[str, dict[str, int]] = {
     "classic": {"work": 25 * 60, "short_break": 5 * 60,  "long_break": 15 * 60},
     "long":    {"work": 50 * 60, "short_break": 10 * 60, "long_break": 30 * 60},
     "short":   {"work": 15 * 60, "short_break": 3 * 60,  "long_break": 10 * 60},
-    "test":    {"work": 10,      "short_break": 5,        "long_break": 10},
+    "test":    {"work": 10,      "short_break": 5,       "long_break": 10},
 }
 
 

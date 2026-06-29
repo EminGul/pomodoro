@@ -41,6 +41,10 @@ def _fmt_time(seconds: int) -> str:
     return f"{m:02d}:{s:02d}"
 
 
+def _fmt_mins(secs: int) -> str:
+    return f"{secs // 60} min"
+
+
 @click.group()
 def main() -> None:
     """Pomodoro timer with YouTube music streaming."""
@@ -221,3 +225,145 @@ def loop(state: str) -> None:
     config.loop = state == "on"
     config.save()
     click.echo(f"Loop: {state}")
+
+
+@main.command()
+def restart() -> None:
+    """Stop the running daemon (if any) and start a fresh one."""
+    if _daemon_running():
+        _send("stop")
+        time.sleep(0.5)
+    config = Config.load()
+    daemon_module.daemonize(config)
+    time.sleep(0.5)
+    if _daemon_running():
+        click.echo("Restarted.")
+    else:
+        click.echo("Failed to start daemon.", err=True)
+        sys.exit(1)
+
+
+@main.group()
+def config() -> None:
+    """View or change timer settings."""
+
+
+@config.command("show")
+def config_show() -> None:
+    """Print all current settings."""
+    cfg = Config.load()
+    n = cfg.sessions_before_long_break
+    click.echo(f"Cycle: {n} work sessions, then a long break.")
+    click.echo("")
+    click.echo(f"work          {cfg.work_secs // 60} min")
+    click.echo(f"short-break   {cfg.short_break_secs // 60} min")
+    click.echo(f"long-break    {cfg.long_break_secs // 60} min")
+    click.echo(f"sessions      {n}")
+    click.echo(f"volume        {cfg.volume}")
+    click.echo(f"shuffle       {'on' if cfg.shuffle else 'off'}")
+    click.echo(f"loop          {'on' if cfg.loop else 'off'}")
+    click.echo(f"songs         {len(cfg.songs)}")
+
+
+_CONFIG_KEYS = {
+    "work", "short-break", "long-break", "sessions", "volume", "shuffle", "loop", "preset",
+}
+
+
+@config.command("set")
+@click.argument("key")
+@click.argument("value")
+def config_set(key: str, value: str) -> None:
+    """Set a single timer setting by name.
+
+    Keys: work, short-break, long-break (minutes), sessions (count),
+    volume (0-100), shuffle (on/off), loop (on/off), preset (name).
+
+    If the daemon is running, changes take effect at the next session
+    boundary. Run 'pomodoro restart' to apply them immediately.
+    """
+    if key not in _CONFIG_KEYS:
+        click.echo(
+            f"Unknown key '{key}'. Valid keys: {', '.join(sorted(_CONFIG_KEYS))}",
+            err=True,
+        )
+        sys.exit(1)
+
+    cfg = Config.load()
+
+    try:
+        if key == "work":
+            cfg.work_secs = _parse_minutes(key, value)
+        elif key == "short-break":
+            cfg.short_break_secs = _parse_minutes(key, value)
+        elif key == "long-break":
+            cfg.long_break_secs = _parse_minutes(key, value)
+        elif key == "sessions":
+            cfg.sessions_before_long_break = _parse_int(key, value, min_val=1)
+        elif key == "volume":
+            cfg.volume = _parse_int(key, value, min_val=0, max_val=100)
+        elif key == "shuffle":
+            cfg.shuffle = _parse_on_off(key, value)
+        elif key == "loop":
+            cfg.loop = _parse_on_off(key, value)
+        elif key == "preset":
+            cfg.apply_preset(value)
+    except (ValueError, click.BadParameter) as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+
+    cfg.save()
+
+    if key == "work":
+        click.echo(f"work = {_fmt_mins(cfg.work_secs)}")
+    elif key == "short-break":
+        click.echo(f"short-break = {_fmt_mins(cfg.short_break_secs)}")
+    elif key == "long-break":
+        click.echo(f"long-break = {_fmt_mins(cfg.long_break_secs)}")
+    elif key == "sessions":
+        n = cfg.sessions_before_long_break
+        click.echo(f"sessions = {n}  (long break after every {n} work sessions)")
+    elif key == "volume":
+        click.echo(f"volume = {cfg.volume}")
+    elif key == "shuffle":
+        click.echo(f"shuffle = {'on' if cfg.shuffle else 'off'}")
+    elif key == "loop":
+        click.echo(f"loop = {'on' if cfg.loop else 'off'}")
+    elif key == "preset":
+        click.echo(
+            f"preset '{value}' applied: "
+            f"work = {_fmt_mins(cfg.work_secs)}, "
+            f"short-break = {_fmt_mins(cfg.short_break_secs)}, "
+            f"long-break = {_fmt_mins(cfg.long_break_secs)}"
+        )
+
+    if _daemon_running():
+        click.echo("Note: takes effect at the next session boundary. Run 'pomodoro restart' to apply now.")
+
+
+def _parse_minutes(key: str, value: str) -> int:
+    try:
+        minutes = int(value)
+    except ValueError:
+        raise ValueError(f"'{key}' expects a whole number of minutes, got '{value}'.")
+    if minutes < 1:
+        raise ValueError(f"'{key}' must be at least 1 minute.")
+    return minutes * 60
+
+
+def _parse_int(key: str, value: str, min_val: int | None = None, max_val: int | None = None) -> int:
+    try:
+        n = int(value)
+    except ValueError:
+        raise ValueError(f"'{key}' expects an integer, got '{value}'.")
+    if min_val is not None and n < min_val:
+        raise ValueError(f"'{key}' must be >= {min_val}.")
+    if max_val is not None and n > max_val:
+        raise ValueError(f"'{key}' must be <= {max_val}.")
+    return n
+
+
+def _parse_on_off(key: str, value: str) -> bool:
+    if value not in ("on", "off"):
+        raise ValueError(f"'{key}' expects 'on' or 'off', got '{value}'.")
+    return value == "on"
