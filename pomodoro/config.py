@@ -4,6 +4,8 @@ import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from pomodoro.playlist import Song
+
 CONFIG_DIR = Path.home() / ".config" / "pomodoro"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
@@ -21,10 +23,15 @@ class Config:
     short_break_secs: int = 5 * 60
     long_break_secs: int = 15 * 60
     sessions_before_long_break: int = 4
-    songs: list[str] = field(default_factory=list)
+    songs: list[Song | None] = field(default_factory=list)
     shuffle: bool = False
     loop: bool = False
     volume: int = 100
+
+    @property
+    def song_urls(self) -> list[str]:
+        """URLs of the filled playlist slots, in slot order."""
+        return [s.url for s in self.songs if s is not None]
 
     def save(self) -> None:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -39,6 +46,8 @@ class Config:
         except (json.JSONDecodeError, OSError):
             return cls()
         known = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
+        if "songs" in known:
+            known["songs"] = [_load_song(s) for s in known["songs"]]
         return cls(**known)
 
     def apply_preset(self, preset: str) -> None:
@@ -50,3 +59,12 @@ class Config:
         self.work_secs = p["work"]
         self.short_break_secs = p["short_break"]
         self.long_break_secs = p["long_break"]
+
+
+def _load_song(entry: object) -> Song | None:
+    """Reconstruct a slot entry, tolerating the pre-playlist plain-URL format."""
+    if entry is None:
+        return None
+    if isinstance(entry, str):
+        return Song(url=entry, name=entry)
+    return Song(**entry)

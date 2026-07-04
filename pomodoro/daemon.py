@@ -51,12 +51,12 @@ class Daemon:
             clear_state()
 
     def _start_session(self) -> None:
-        if self._config.songs:
+        if self._config.song_urls:
             if self._state.session_type == SessionType.WORK:
                 if self._player.is_playing:
                     self._player.resume_playback()
                 else:
-                    self._player.play(self._config.songs, self._config.shuffle, self._config.loop)
+                    self._player.play(self._config.song_urls, self._config.shuffle, self._config.loop)
             else:
                 if self._player.is_playing:
                     self._player.pause_playback()

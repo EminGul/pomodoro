@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import patch
 
 from pomodoro.config import Config, PRESETS
+from pomodoro.playlist import Song
 
 
 def test_defaults():
@@ -54,11 +55,29 @@ def test_save_and_load(tmp_path):
         patch("pomodoro.config.CONFIG_DIR", tmp_path),
         patch("pomodoro.config.CONFIG_FILE", config_file),
     ):
-        cfg = Config(work_secs=30 * 60, songs=["https://youtube.com/watch?v=abc"])
+        cfg = Config(
+            work_secs=30 * 60,
+            songs=[Song(url="https://youtube.com/watch?v=abc", name="Track One"), None],
+        )
         cfg.save()
         loaded = Config.load()
     assert loaded.work_secs == 30 * 60
-    assert loaded.songs == ["https://youtube.com/watch?v=abc"]
+    assert loaded.songs == [Song(url="https://youtube.com/watch?v=abc", name="Track One"), None]
+    assert loaded.song_urls == ["https://youtube.com/watch?v=abc"]
+
+
+def test_load_migrates_plain_string_songs(tmp_path):
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        '{"work_secs": 1800, "songs": ["https://youtube.com/watch?v=abc"]}'
+    )
+    with (
+        patch("pomodoro.config.CONFIG_DIR", tmp_path),
+        patch("pomodoro.config.CONFIG_FILE", config_file),
+    ):
+        cfg = Config.load()
+    assert cfg.songs == [Song(url="https://youtube.com/watch?v=abc", name="https://youtube.com/watch?v=abc")]
+    assert cfg.song_urls == ["https://youtube.com/watch?v=abc"]
 
 
 def test_load_returns_defaults_when_no_file(tmp_path):

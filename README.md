@@ -81,19 +81,31 @@ pomodoro stop
 ### Playlist
 
 ```
-pomodoro songs add <youtube-url>    # add a track
-pomodoro songs list                 # show playlist with indices
-pomodoro songs remove <index>       # remove by index
-pomodoro songs shuffle on           # randomise playback order
+pomodoro playlist add <youtube-url> [name]   # add a track (fetches the title if name is omitted)
+pomodoro playlist list                       # show playlist slots with indices
+pomodoro playlist edit                       # interactively browse, reorder, and delete songs
+pomodoro playlist shuffle on                 # randomise playback order
 
 pomodoro loop on                    # loop the playlist
 pomodoro volume 80                  # set volume (0-100)
 ```
 
+`pomodoro playlist edit` opens a full-screen table of the playlist's song
+slots, ten per page.
+Slots that have not been filled show as `[None]`; you can only page forward
+into a page that has at least one filled slot.
+
+- Up/Down arrows move the cursor (and page at the top/bottom row).
+- Del removes the highlighted song, leaving its slot empty.
+- Enter toggles swap mode: Space marks a slot (shown with a leading `>`),
+  and Space on a second slot swaps the two; Enter exits swap mode.
+- `q` quits the editor.
+
 ## TODO
 
 - [x] ~~Better editing for pomodoro intervals (`pomodoro config show` / `pomodoro config set <key> <value>`, changes apply at next session boundary or immediately via `pomodoro restart`)~~
 - [x] ~~Live status watch (`pomodoro status --watch` that redraws in place)~~
-- [ ] Better playlist editing and support for multiple named playlists
+- [x] ~~Better playlist editing (`pomodoro playlist edit`: paginated slot table, reorder via swap mode, delete with Del)~~
+- [ ] Support for multiple named playlists
 - [ ] Sound notifications (short chime on session end, alongside existing
       visual/bell notifications)

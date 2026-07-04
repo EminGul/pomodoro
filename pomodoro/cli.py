@@ -9,6 +9,9 @@ import click
 
 from pomodoro import daemon as daemon_module
 from pomodoro.config import PRESETS, Config
+from pomodoro.player import fetch_title
+from pomodoro.playlist import Song, add_song
+from pomodoro.playlist_editor import run_editor
 from pomodoro.state import SOCK_FILE, read_pid, read_state
 
 
@@ -188,47 +191,50 @@ def status(watch: bool) -> None:
 
 
 @main.group()
-def songs() -> None:
+def playlist() -> None:
     """Manage the study playlist."""
 
 
-@songs.command("add")
+@playlist.command("add")
 @click.argument("url")
-def songs_add(url: str) -> None:
-    """Add a YouTube URL to the playlist."""
+@click.argument("name", required=False)
+def playlist_add(url: str, name: str | None) -> None:
+    """Add a YouTube URL to the playlist. Fetches the title if NAME is omitted."""
+    if name is None:
+        name = fetch_title(url)
+        if name is None:
+            click.echo("Warning: could not fetch the video title, using the URL as the name.", err=True)
+            name = url
     config = Config.load()
-    config.songs.append(url)
+    add_song(config.songs, Song(url=url, name=name))
     config.save()
-    click.echo(f"Added. Playlist has {len(config.songs)} song(s).")
+    click.echo(f"Added '{name}'. Playlist has {len(config.song_urls)} song(s).")
 
 
-@songs.command("list")
-def songs_list() -> None:
+@playlist.command("list")
+def playlist_list() -> None:
     """List all songs in the playlist."""
     config = Config.load()
     if not config.songs:
         click.echo("Playlist is empty.")
         return
-    for i, url in enumerate(config.songs):
-        click.echo(f"{i}  {url}")
+    for i, song in enumerate(config.songs):
+        if song is None:
+            click.echo(f"{i + 1}  [None]")
+        else:
+            click.echo(f"{i + 1}  {song.name}  {song.url}")
 
 
-@songs.command("remove")
-@click.argument("index", type=int)
-def songs_remove(index: int) -> None:
-    """Remove a song by index (see 'songs list')."""
+@playlist.command("edit")
+def playlist_edit() -> None:
+    """Interactively browse, reorder, and delete songs."""
     config = Config.load()
-    if index < 0 or index >= len(config.songs):
-        click.echo(f"Index {index} out of range (0-{len(config.songs) - 1}).", err=True)
-        sys.exit(1)
-    removed = config.songs.pop(index)
-    config.save()
-    click.echo(f"Removed: {removed}")
+    run_editor(config)
 
 
-@songs.command("shuffle")
+@playlist.command("shuffle")
 @click.argument("state", type=click.Choice(["on", "off"]))
-def songs_shuffle(state: str) -> None:
+def playlist_shuffle(state: str) -> None:
     """Enable or disable shuffle for the playlist."""
     config = Config.load()
     config.shuffle = state == "on"
@@ -291,7 +297,7 @@ def config_show() -> None:
     click.echo(f"volume        {cfg.volume}")
     click.echo(f"shuffle       {'on' if cfg.shuffle else 'off'}")
     click.echo(f"loop          {'on' if cfg.loop else 'off'}")
-    click.echo(f"songs         {len(cfg.songs)}")
+    click.echo(f"songs         {len(cfg.song_urls)}")
 
 
 _CONFIG_KEYS = {

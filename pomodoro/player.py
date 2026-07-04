@@ -72,6 +72,40 @@ def _resolve_mpv() -> tuple[str, str | None, bool]:
 _MPV_CMD, _YTDLP_PATH, _USING_WINDOWS_MPV = _resolve_mpv()
 
 
+def fetch_title(url: str) -> str | None:
+    """Best-effort video title lookup via yt-dlp. Returns None on any failure."""
+    try:
+        result = subprocess.run(
+            ["yt-dlp", "--get-title", "--no-playlist", url],
+            capture_output=True, text=True, timeout=15,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        result = None
+
+    if result is None or result.returncode != 0:
+        if not (_is_wsl() and _YTDLP_PATH):
+            return None
+        # Fall back to the Windows yt-dlp install used for WSL audio; pass the
+        # exe path and URL as $args so neither is interpolated into the
+        # PowerShell command string.
+        try:
+            result = subprocess.run(
+                [
+                    "powershell.exe", "-NoProfile", "-Command",
+                    "& $args[0] --get-title --no-playlist $args[1]",
+                    _YTDLP_PATH, url,
+                ],
+                capture_output=True, text=True, timeout=15,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return None
+        if result.returncode != 0:
+            return None
+
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    return lines[-1] if lines else None
+
+
 class Player:
     def __init__(self, volume: int = 100) -> None:
         self._proc: subprocess.Popen | None = None
