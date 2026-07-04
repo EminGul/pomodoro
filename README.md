@@ -67,6 +67,13 @@ pomodoro start --work 30 --short-break 5
 # Check what is running
 pomodoro status
 
+# Redraw status in place every second; shows the currently playing song
+# and quits on 'q' (Ctrl+C also works)
+pomodoro status --watch
+
+# Enter --watch mode automatically after every 'pomodoro start'
+pomodoro config set watch on
+
 # Pause and resume
 pomodoro pause
 pomodoro resume

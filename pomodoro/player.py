@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import socket as _socket
 import subprocess
+import time
 from pathlib import Path
 
 # Candidate locations for Windows mpv, in priority order.
@@ -70,6 +71,92 @@ def _resolve_mpv() -> tuple[str, str | None, bool]:
 # Resolved once at import time — avoids repeated disk reads and a blocking
 # PowerShell call on every Player instantiation.
 _MPV_CMD, _YTDLP_PATH, _USING_WINDOWS_MPV = _resolve_mpv()
+
+
+def _parse_ipc_response(lines: list[str], request_id: int) -> str | None:
+    """Pick the `data` value out of the mpv IPC reply matching `request_id`."""
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("request_id") == request_id and "data" in obj and obj["data"] is not None:
+            return obj["data"]
+    return None
+
+
+def _ipc_send_unix(command: dict, request_id: int | None = None) -> list[str]:
+    """Send `command` over the Unix IPC socket.
+
+    Fire-and-forget when `request_id` is None. Otherwise reads until a reply
+    matching `request_id` arrives or the deadline elapses, so an unsolicited
+    mpv event line can't be mistaken for "no reply".
+    """
+    try:
+        with _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM) as s:
+            s.settimeout(2)
+            s.connect(str(_IPC_SOCK_PATH))
+            s.sendall((json.dumps(command) + "\n").encode())
+            if request_id is None:
+                return []
+            buf = b""
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                buf += chunk
+                lines = buf.decode(errors="replace").splitlines()
+                if _parse_ipc_response(lines, request_id) is not None:
+                    return lines
+            return buf.decode(errors="replace").splitlines()
+    except OSError:
+        return []
+
+
+def _ipc_send_pipe(command: dict, request_id: int | None = None) -> list[str]:
+    """Send `command` over the Windows named-pipe IPC channel.
+
+    Fire-and-forget when `request_id` is None. Otherwise polls for a reply
+    line whose `request_id` matches exactly (the `(?!\\d)` guard stops "1"
+    from matching a reply for id "10", "19", etc).
+    """
+    payload = json.dumps(command)
+    if request_id is None:
+        ps_script = (
+            f"$p = New-Object System.IO.Pipes.NamedPipeClientStream('.', '{_IPC_PIPE_NAME}', "
+            f"[System.IO.Pipes.PipeDirection]::InOut); "
+            f"$p.Connect(2000); "
+            f"$w = New-Object System.IO.StreamWriter($p); "
+            f"$w.AutoFlush = $true; "
+            f"$w.WriteLine('{payload}'); "
+            f"$p.Close()"
+        )
+    else:
+        ps_script = (
+            f"$p = New-Object System.IO.Pipes.NamedPipeClientStream('.', '{_IPC_PIPE_NAME}', "
+            f"[System.IO.Pipes.PipeDirection]::InOut); "
+            f"$p.Connect(2000); "
+            f"$w = New-Object System.IO.StreamWriter($p); $w.AutoFlush = $true; "
+            f"$r = New-Object System.IO.StreamReader($p); "
+            f"$w.WriteLine('{payload}'); "
+            f"for ($i = 0; $i -lt 20; $i++) {{ "
+            f"$line = $r.ReadLine(); "
+            f"if ($line -match '\"request_id\":{request_id}(?!\\d)') {{ Write-Output $line; break }} "
+            f"}}; "
+            f"$p.Close()"
+        )
+    try:
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", ps_script],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+    return result.stdout.splitlines()
 
 
 def fetch_title(url: str) -> str | None:
@@ -150,6 +237,18 @@ class Player:
         if self.is_playing:
             self._mpv_command({"command": ["set_property", "pause", False]})
 
+    def current_title(self) -> str | None:
+        """The title of the track mpv is currently playing, or None."""
+        if not self.is_playing:
+            return None
+        return self._get_property("media-title")
+
+    def _get_property(self, prop: str) -> str | None:
+        request_id = 1
+        command = {"command": ["get_property", prop], "request_id": request_id}
+        lines = self._ipc_send(command, request_id)
+        return _parse_ipc_response(lines, request_id)
+
     def stop(self) -> None:
         if self._proc and self._proc.poll() is None:
             self._kill_proc()
@@ -175,38 +274,12 @@ class Player:
             self._proc.kill()
 
     def _mpv_command(self, command: dict) -> None:
+        self._ipc_send(command)
+
+    def _ipc_send(self, command: dict, request_id: int | None = None) -> list[str]:
         if self._using_windows_mpv:
-            self._mpv_command_pipe(command)
-        else:
-            self._mpv_command_unix(command)
-
-    def _mpv_command_pipe(self, command: dict) -> None:
-        payload = json.dumps(command)
-        ps_script = (
-            f"$p = New-Object System.IO.Pipes.NamedPipeClientStream('.', '{_IPC_PIPE_NAME}', "
-            f"[System.IO.Pipes.PipeDirection]::InOut); "
-            f"$p.Connect(2000); "
-            f"$w = New-Object System.IO.StreamWriter($p); "
-            f"$w.AutoFlush = $true; "
-            f"$w.WriteLine('{payload}'); "
-            f"$p.Close()"
-        )
-        try:
-            subprocess.run(
-                ["powershell.exe", "-NoProfile", "-Command", ps_script],
-                capture_output=True, timeout=5,
-            )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-
-    def _mpv_command_unix(self, command: dict) -> None:
-        try:
-            with _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM) as s:
-                s.settimeout(2)
-                s.connect(str(_IPC_SOCK_PATH))
-                s.sendall((json.dumps(command) + "\n").encode())
-        except OSError:
-            pass
+            return _ipc_send_pipe(command, request_id)
+        return _ipc_send_unix(command, request_id)
 
     @property
     def is_playing(self) -> bool:

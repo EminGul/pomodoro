@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import os
+import select
 import socket
 import sys
+import termios
 import time
+import tty
 
 import click
 
@@ -46,6 +49,16 @@ def _fmt_time(seconds: int) -> str:
 
 def _fmt_mins(secs: int) -> str:
     return f"{secs // 60} min"
+
+
+def _wait_for_state(timeout: float) -> dict | None:
+    """Poll for the daemon's first state write, in case it hasn't landed yet."""
+    deadline = time.monotonic() + timeout
+    state = read_state()
+    while state is None and time.monotonic() < deadline:
+        time.sleep(0.1)
+        state = read_state()
+    return state
 
 
 @click.group()
@@ -91,6 +104,12 @@ def start(preset: str | None, work: int | None, short_break: int | None, long_br
             f"long-break={_fmt_time(config.long_break_secs)}  "
             f"sessions={config.sessions_before_long_break}"
         )
+        if config.watch and sys.stdin.isatty():
+            state = _wait_for_state(timeout=2.0)
+            if state:
+                _watch_loop(state)
+            else:
+                click.echo("Warning: could not read daemon state; skipping --watch.", err=True)
     else:
         click.echo("Failed to start daemon.", err=True)
         sys.exit(1)
@@ -136,6 +155,9 @@ def resume() -> None:
         click.echo("Daemon not running.", err=True)
 
 
+_MAX_TITLE_WIDTH = 60
+
+
 def _render_status(state: dict) -> list[str]:
     stype = state["session_type"].replace("_", " ").title()
     remaining = _fmt_time(state["seconds_remaining"])
@@ -146,11 +168,58 @@ def _render_status(state: dict) -> list[str]:
         f"Session:   {stype}{' (paused)' if paused else ''}",
         f"Remaining: {remaining}",
         f"Music:     {music}",
-        f"Completed: {done} work session(s)",
     ]
+    song_title = state.get("song_title")
+    if state["music_playing"] and song_title:
+        if len(song_title) > _MAX_TITLE_WIDTH:
+            song_title = song_title[: _MAX_TITLE_WIDTH - 3] + "..."
+        lines.append(f"Playing:   {song_title}")
+    lines.append(f"Completed: {done} work session(s)")
     if not state.get("mpv_available", True):
         lines.append("Warning:   mpv not found -- music disabled (install mpv)")
     return lines
+
+
+def _watch_loop(state: dict) -> None:
+    """Redraw status in place every second until 'q' or Ctrl+C is pressed."""
+    click.echo("Watching status -- press q to quit (Ctrl+C also works).")
+
+    interactive = sys.stdin.isatty()
+    old_settings = None
+    fd = sys.stdin.fileno() if interactive else None
+
+    prev_line_count = 0
+    try:
+        if interactive:
+            old_settings = termios.tcgetattr(fd)
+            tty.setcbreak(fd)
+        while True:
+            if prev_line_count:
+                sys.stdout.write(f"\033[{prev_line_count}A\r\033[J")
+            lines = _render_status(state)
+            for line in lines:
+                click.echo(line)
+            prev_line_count = len(lines)
+            sys.stdout.flush()
+
+            if interactive:
+                if select.select([sys.stdin], [], [], 1.0)[0]:
+                    ch = sys.stdin.read(1)
+                    if ch.lower() == "q":
+                        click.echo("")
+                        return
+            else:
+                time.sleep(1)
+
+            if not _daemon_running():
+                click.echo("Daemon not running.")
+                return
+            state = read_state() or state
+    except KeyboardInterrupt:
+        click.echo("")
+    finally:
+        if old_settings is not None:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
 @main.command()
@@ -171,23 +240,7 @@ def status(watch: bool) -> None:
             click.echo(line)
         return
 
-    prev_line_count = 0
-    try:
-        while True:
-            if prev_line_count:
-                sys.stdout.write(f"\033[{prev_line_count}A\r\033[J")
-                sys.stdout.flush()
-            lines = _render_status(state)
-            for line in lines:
-                click.echo(line)
-            prev_line_count = len(lines)
-            time.sleep(1)
-            if not _daemon_running():
-                click.echo("Daemon not running.")
-                return
-            state = read_state() or state
-    except KeyboardInterrupt:
-        click.echo("")
+    _watch_loop(state)
 
 
 @main.group()
@@ -297,11 +350,12 @@ def config_show() -> None:
     click.echo(f"volume        {cfg.volume}")
     click.echo(f"shuffle       {'on' if cfg.shuffle else 'off'}")
     click.echo(f"loop          {'on' if cfg.loop else 'off'}")
+    click.echo(f"watch         {'on' if cfg.watch else 'off'}")
     click.echo(f"songs         {len(cfg.song_urls)}")
 
 
 _CONFIG_KEYS = {
-    "work", "short-break", "long-break", "sessions", "volume", "shuffle", "loop", "preset",
+    "work", "short-break", "long-break", "sessions", "volume", "shuffle", "loop", "watch", "preset",
 }
 
 
@@ -312,7 +366,8 @@ def config_set(key: str, value: str) -> None:
     """Set a single timer setting by name.
 
     Keys: work, short-break, long-break (minutes), sessions (count),
-    volume (0-100), shuffle (on/off), loop (on/off), preset (name).
+    volume (0-100), shuffle (on/off), loop (on/off), watch (on/off,
+    enter 'status --watch' automatically after 'pomodoro start'), preset (name).
 
     If the daemon is running, changes take effect at the next session
     boundary. Run 'pomodoro restart' to apply them immediately.
@@ -341,6 +396,8 @@ def config_set(key: str, value: str) -> None:
             cfg.shuffle = _parse_on_off(key, value)
         elif key == "loop":
             cfg.loop = _parse_on_off(key, value)
+        elif key == "watch":
+            cfg.watch = _parse_on_off(key, value)
         elif key == "preset":
             cfg.apply_preset(value)
     except (ValueError, click.BadParameter) as exc:
@@ -364,6 +421,8 @@ def config_set(key: str, value: str) -> None:
         click.echo(f"shuffle = {'on' if cfg.shuffle else 'off'}")
     elif key == "loop":
         click.echo(f"loop = {'on' if cfg.loop else 'off'}")
+    elif key == "watch":
+        click.echo(f"watch = {'on' if cfg.watch else 'off'}")
     elif key == "preset":
         click.echo(
             f"preset '{value}' applied: "

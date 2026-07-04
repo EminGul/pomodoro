@@ -17,6 +17,7 @@ def write_state(
     music_playing: bool,
     mpv_available: bool = True,
     paused: bool = False,
+    song_title: str | None = None,
 ) -> None:
     data = {
         "session_type": state.session_type.value,
@@ -27,6 +28,7 @@ def write_state(
         "music_playing": music_playing,
         "mpv_available": mpv_available,
         "paused": paused,
+        "song_title": song_title,
         "updated_at": time.time(),
     }
     STATE_FILE.write_text(json.dumps(data))

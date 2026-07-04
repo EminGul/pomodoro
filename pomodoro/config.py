@@ -27,6 +27,7 @@ class Config:
     shuffle: bool = False
     loop: bool = False
     volume: int = 100
+    watch: bool = False
 
     @property
     def song_urls(self) -> list[str]:

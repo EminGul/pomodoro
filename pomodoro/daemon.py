@@ -13,6 +13,9 @@ from pomodoro.state import SOCK_FILE, clear_state, write_pid, write_state
 from pomodoro.timer import SessionType, TimerState
 
 
+_SONG_POLL_INTERVAL = 5.0
+
+
 class Daemon:
     def __init__(self, config: Config, notifier: Notifier | None = None) -> None:
         self._config = config
@@ -24,6 +27,8 @@ class Daemon:
         self._running = True
         self._paused = False
         self._lock = threading.Lock()
+        self._current_song: str | None = None
+        self._last_song_query = 0.0
 
     def run(self) -> None:
         write_pid(os.getpid())
@@ -34,6 +39,7 @@ class Daemon:
         socket_thread.start()
 
         self._start_session()
+        self._refresh_song_title()
 
         try:
             while self._running:
@@ -44,23 +50,63 @@ class Daemon:
                     ended = self._state.tick()
                     if ended:
                         self._end_session()
-                    else:
-                        write_state(self._state, self._player.is_playing, self._player.mpv_available)
+                if not ended:
+                    # Queries mpv over IPC, which can block for up to a few
+                    # seconds (worse on the WSL/PowerShell path) - must not
+                    # hold self._lock, or pause/resume/skip would stall too.
+                    self._refresh_song_title()
+                    with self._lock:
+                        write_state(
+                            self._state, self._is_music_active(), self._player.mpv_available,
+                            song_title=self._current_song,
+                        )
         finally:
             self._player.stop()
             clear_state()
 
+    def _is_music_active(self) -> bool:
+        """Whether mpv is actually producing audio right now (not paused, not on a break)."""
+        return (
+            self._player.is_playing
+            and self._state.session_type == SessionType.WORK
+            and not self._paused
+        )
+
+    def _refresh_song_title(self) -> None:
+        if not self._player.is_playing:
+            self._current_song = None
+            return
+        now = time.time()
+        if now - self._last_song_query < _SONG_POLL_INTERVAL:
+            return
+        self._last_song_query = now
+        title = self._player.current_title()
+        if title:
+            self._current_song = title
+
     def _start_session(self) -> None:
+        started_new_playback = False
         if self._config.song_urls:
             if self._state.session_type == SessionType.WORK:
                 if self._player.is_playing:
                     self._player.resume_playback()
                 else:
                     self._player.play(self._config.song_urls, self._config.shuffle, self._config.loop)
+                    started_new_playback = True
             else:
                 if self._player.is_playing:
                     self._player.pause_playback()
-        write_state(self._state, self._player.is_playing, self._player.mpv_available, self._paused)
+        if started_new_playback:
+            # The old title no longer applies, and mpv's IPC channel isn't
+            # ready yet right after spawning - clear it instead of showing a
+            # stale title; _refresh_song_title() will pick up the new one
+            # within a tick or two once mpv is ready to answer.
+            self._current_song = None
+            self._last_song_query = 0.0
+        write_state(
+            self._state, self._is_music_active(), self._player.mpv_available, self._paused,
+            song_title=self._current_song,
+        )
 
     def _end_session(self) -> None:
         self._config = Config.load()
@@ -82,7 +128,10 @@ class Daemon:
         with self._lock:
             self._paused = True
             self._player.pause_playback()
-            write_state(self._state, self._player.is_playing, self._player.mpv_available, paused=True)
+            write_state(
+                self._state, self._is_music_active(), self._player.mpv_available, paused=True,
+                song_title=self._current_song,
+            )
 
     def _resume(self) -> None:
         with self._lock:
