@@ -1,8 +1,8 @@
 # pomodoro
 
-## Demo
-
-mp4 TBA
+<p align="center">
+  <img src="docs/screenshot.png" alt="pomodoro status --watch showing a live progress bar and now-playing song" width="720">
+</p>
 
 ## About
 
@@ -14,8 +14,9 @@ sessions. Music plays during work, pauses automatically on breaks, and resumes
 when you get back to work.
 
 Notifications fire at every session boundary via whatever is available in your
-environment (Windows toast via msg.exe, Linux desktop via notify-send, or a
-terminal bell as a fallback).
+environment: a Windows dialog with a custom title and system sound (via
+PowerShell's MessageBox, on WSL2), Linux desktop via notify-send, or a
+terminal bell as a fallback.
 
 ## Prerequisites
 
@@ -122,5 +123,4 @@ into a page that has at least one filled slot.
 - [x] ~~Live status watch (`pomodoro status --watch` that redraws in place)~~
 - [x] ~~Better playlist editing (`pomodoro playlist edit`: paginated slot table, reorder via swap mode, delete with Del)~~
 - [x] ~~Support for multiple named playlists (create, switch, and rename from inside `pomodoro playlist edit`; `pomodoro playlist all`/`delete` for listing and removal)~~
-- [ ] Sound notifications (short chime on session end, alongside existing
-      visual/bell notifications)
+- [x] ~~Sound notifications (Windows dialogs now play the system notification chime; cleaner custom-titled dialog replaces the old msg.exe popup)~~
