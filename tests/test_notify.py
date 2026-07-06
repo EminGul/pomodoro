@@ -5,8 +5,8 @@ import pytest
 from pomodoro.notify import (
     BellNotifier,
     CompositeNotifier,
-    MsgExeNotifier,
     NotifySendNotifier,
+    MessageBoxNotifier,
     _BACKENDS,
     detect,
 )
@@ -33,14 +33,14 @@ def test_bell_notifier_always_available():
     assert BellNotifier.available() is True
 
 
-def test_msg_exe_available_when_on_path():
-    with patch("pomodoro.notify.shutil.which", return_value="/mnt/c/Windows/System32/msg.exe"):
-        assert MsgExeNotifier.available() is True
+def test_messagebox_available_when_on_path():
+    with patch("pomodoro.notify.shutil.which", return_value="/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"):
+        assert MessageBoxNotifier.available() is True
 
 
-def test_msg_exe_unavailable_when_not_on_path():
+def test_messagebox_unavailable_when_not_on_path():
     with patch("pomodoro.notify.shutil.which", return_value=None):
-        assert MsgExeNotifier.available() is False
+        assert MessageBoxNotifier.available() is False
 
 
 def test_notify_send_available_when_on_path():
@@ -74,23 +74,23 @@ def test_detect_always_includes_bell():
     assert any(isinstance(n, BellNotifier) for n in notifier._notifiers)
 
 
-def test_detect_includes_msg_exe_when_available():
-    with patch("pomodoro.notify.shutil.which", return_value="/path/to/msg.exe"):
+def test_detect_includes_messagebox_when_available():
+    with patch("pomodoro.notify.shutil.which", return_value="/path/to/powershell.exe"):
         notifier = detect()
-    assert any(isinstance(n, MsgExeNotifier) for n in notifier._notifiers)
+    assert any(isinstance(n, MessageBoxNotifier) for n in notifier._notifiers)
 
 
-def test_detect_excludes_msg_exe_when_unavailable():
+def test_detect_excludes_messagebox_when_unavailable():
     with patch("pomodoro.notify.shutil.which", return_value=None):
         notifier = detect()
-    assert not any(isinstance(n, MsgExeNotifier) for n in notifier._notifiers)
+    assert not any(isinstance(n, MessageBoxNotifier) for n in notifier._notifiers)
 
 
 # --- resilience ---
 
-def test_msg_exe_does_not_raise_on_subprocess_failure():
-    with patch("pomodoro.notify.subprocess.run", side_effect=FileNotFoundError):
-        MsgExeNotifier().send("Title", "Body")  # must not raise
+def test_messagebox_does_not_raise_on_subprocess_failure():
+    with patch("pomodoro.notify.subprocess.Popen", side_effect=FileNotFoundError):
+        MessageBoxNotifier().send("Title", "Body")  # must not raise
 
 
 def test_notify_send_does_not_raise_on_subprocess_failure():

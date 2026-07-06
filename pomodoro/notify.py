@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import base64
 import glob
 import shutil
 import subprocess
+import threading
 from typing import Protocol
 
 
@@ -19,25 +21,60 @@ class Notifier(Protocol):
     def send(self, title: str, body: str) -> None: ...
 
 
-# TODO: add a SoundNotifier backend that plays a sound alongside the visual notification.
-class MsgExeNotifier:
-    """Windows dialog via msg.exe. Works from WSL2."""
+# Real WinRT toast notifications (Action Center cards) were tried first, but
+# proved undeliverable: WSL-spawned Windows processes hit a session/identity
+# boundary that silently drops toasts before they ever reach the Action
+# Center - confirmed even for genuinely registered AUMIDs (Explorer, Windows
+# Terminal), and independent of elevation or session ID (both matched
+# explorer.exe's). A MessageBox dialog uses the same raw-window mechanism as
+# msg.exe, which *is* provably deliverable from this context - it just gets a
+# real custom title instead of msg.exe's fixed "Message from <host> at <time>".
+#
+# Values are embedded as single-quoted PowerShell string literals (escaped by
+# _ps_escape) and shipped via -EncodedCommand rather than as trailing
+# -Command args - PowerShell doesn't cleanly bind those to $args for a
+# multi-statement script, it re-appends the raw text as a second top-level
+# command instead, which silently corrupts whichever value lands last.
+_MESSAGEBOX_TEMPLATE = """
+Add-Type -AssemblyName System.Windows.Forms > $null
+[System.Windows.Forms.MessageBox]::Show('{body}', '{title}', [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) > $null
+"""
+
+
+def _ps_escape(value: str) -> str:
+    """Escape a value for embedding in a single-quoted PowerShell string literal."""
+    return value.replace("'", "''")
+
+
+class MessageBoxNotifier:
+    """Windows dialog via System.Windows.Forms.MessageBox, run through PowerShell.
+
+    Works from WSL2. The Information icon triggers Windows' standard
+    notification chime, so this covers sound too - no separate backend needed.
+
+    Launched via Popen rather than run: MessageBox.Show blocks until the user
+    clicks OK (which may be much later, or never), and that wait must happen
+    in the detached PowerShell process, not on the daemon's thread. A reaper
+    thread still calls wait() on it eventually so the child doesn't linger as
+    a zombie once it exits.
+    """
 
     @classmethod
     def available(cls) -> bool:
-        return shutil.which("msg.exe") is not None
+        return shutil.which("powershell.exe") is not None
 
     def send(self, title: str, body: str) -> None:
+        script = _MESSAGEBOX_TEMPLATE.format(title=_ps_escape(title), body=_ps_escape(body))
+        encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
         try:
-            subprocess.run(
-                ["msg.exe", "*", f"{title}: {body}"],
-                check=False,
-                timeout=5,
+            proc = subprocess.Popen(
+                ["powershell.exe", "-NoProfile", "-Sta", "-EncodedCommand", encoded],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
+        except FileNotFoundError:
+            return
+        threading.Thread(target=proc.wait, daemon=True).start()
 
 
 class NotifySendNotifier:
@@ -94,7 +131,7 @@ class CompositeNotifier:
 
 # To add a new backend: implement `available()` and `send()`, then add it here.
 _BACKENDS: list[type[Notifier]] = [
-    MsgExeNotifier,
+    MessageBoxNotifier,
     NotifySendNotifier,
     BellNotifier,
 ]
