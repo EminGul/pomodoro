@@ -3,11 +3,21 @@ from pomodoro.playlist import (
     Song,
     add_song,
     ensure_slots,
+    filled,
     page_count,
     page_slots,
     remove_slot,
     swap_slots,
 )
+
+
+def test_filled_drops_none_slots_preserving_order():
+    songs = [Song("u1", "a"), None, Song("u3", "c"), None]
+    assert filled(songs) == [Song("u1", "a"), Song("u3", "c")]
+
+
+def test_filled_of_empty_list_is_empty():
+    assert filled([]) == []
 
 
 def test_add_song_appends_when_no_empty_slot():

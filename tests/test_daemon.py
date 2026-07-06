@@ -64,7 +64,7 @@ def test_refresh_song_title_clears_cache_when_not_playing():
 def test_refresh_song_title_throttles_within_poll_interval():
     daemon = _make_daemon()
     _set_playing(daemon, True)
-    daemon._player.current_title = lambda: "Should Not Be Seen"
+    daemon._player.current_path = lambda: "Should Not Be Seen"
     daemon._current_song = "Old Title"
     daemon._last_song_query = time.time()
     daemon._refresh_song_title()
@@ -74,16 +74,27 @@ def test_refresh_song_title_throttles_within_poll_interval():
 def test_refresh_song_title_updates_on_successful_query():
     daemon = _make_daemon()
     _set_playing(daemon, True)
-    daemon._player.current_title = lambda: "New Title"
+    daemon._song_names = {"u1": "New Title"}
+    daemon._player.current_path = lambda: "u1"
     daemon._last_song_query = 0.0
     daemon._refresh_song_title()
     assert daemon._current_song == "New Title"
 
 
+def test_refresh_song_title_falls_back_to_path_when_not_in_playlist():
+    daemon = _make_daemon()
+    _set_playing(daemon, True)
+    daemon._song_names = {}
+    daemon._player.current_path = lambda: "https://youtube.com/watch?v=unknown"
+    daemon._last_song_query = 0.0
+    daemon._refresh_song_title()
+    assert daemon._current_song == "https://youtube.com/watch?v=unknown"
+
+
 def test_refresh_song_title_keeps_stale_value_on_failed_query():
     daemon = _make_daemon()
     _set_playing(daemon, True)
-    daemon._player.current_title = lambda: None
+    daemon._player.current_path = lambda: None
     daemon._current_song = "Previous Title"
     daemon._last_song_query = 0.0
     daemon._refresh_song_title()
@@ -95,7 +106,6 @@ def test_start_session_clears_stale_title_when_spawning_fresh_playback():
     daemon._config.songs = [Song(url="u1", name="n1")]
     _set_playing(daemon, False)
     daemon._player.play = lambda *a, **kw: None
-    daemon._player.current_title = lambda: None
     daemon._current_song = "Previous Song From Before A Skip"
     daemon._last_song_query = time.time()
 
@@ -103,6 +113,17 @@ def test_start_session_clears_stale_title_when_spawning_fresh_playback():
 
     assert daemon._current_song is None
     assert daemon._last_song_query == 0.0
+
+
+def test_start_session_builds_song_names_from_playlist_on_fresh_playback():
+    daemon = _make_daemon()
+    daemon._config.songs = [Song(url="u1", name="Track One"), None, Song(url="u2", name="Track Two")]
+    _set_playing(daemon, False)
+    daemon._player.play = lambda *a, **kw: None
+
+    daemon._start_session()
+
+    assert daemon._song_names == {"u1": "Track One", "u2": "Track Two"}
 
 
 def test_start_session_keeps_title_when_resuming_existing_playback():
@@ -118,3 +139,19 @@ def test_start_session_keeps_title_when_resuming_existing_playback():
 
     assert daemon._current_song == "Still Playing This"
     assert daemon._last_song_query == last_query
+
+
+def test_start_session_refreshes_song_names_when_resuming_existing_playback():
+    # A playlist edit made during a break (mpv only paused, not stopped) must
+    # be picked up on resume -- previously _song_names was only rebuilt on a
+    # fresh mpv spawn, so a rename made mid-break kept showing the old name
+    # for the rest of that daemon's life.
+    daemon = _make_daemon()
+    daemon._song_names = {"u1": "Stale Name"}
+    daemon._config.songs = [Song(url="u1", name="Renamed During Break")]
+    _set_playing(daemon, True)
+    daemon._player.resume_playback = lambda: None
+
+    daemon._start_session()
+
+    assert daemon._song_names == {"u1": "Renamed During Break"}

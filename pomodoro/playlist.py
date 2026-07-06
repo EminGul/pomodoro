@@ -11,6 +11,11 @@ class Song:
     name: str
 
 
+def filled(songs: list[Song | None]) -> list[Song]:
+    """The non-empty slots, in order."""
+    return [s for s in songs if s is not None]
+
+
 def add_song(songs: list[Song | None], song: Song) -> None:
     """Insert into the first empty slot, or append a new slot."""
     for i, slot in enumerate(songs):

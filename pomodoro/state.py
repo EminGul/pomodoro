@@ -22,6 +22,7 @@ def write_state(
     data = {
         "session_type": state.session_type.value,
         "seconds_remaining": state.seconds_remaining,
+        "session_total_seconds": state.session_total_seconds,
         "work_session_count": state.work_session_count,
         "total_work_sessions": state.total_work_sessions,
         "sessions_before_long_break": state.sessions_before_long_break,

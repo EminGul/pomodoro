@@ -13,7 +13,7 @@ import click
 from pomodoro import daemon as daemon_module
 from pomodoro.config import PRESETS, Config
 from pomodoro.player import fetch_title
-from pomodoro.playlist import Song, add_song
+from pomodoro.playlist import Song, add_song, filled
 from pomodoro.playlist_editor import run_editor
 from pomodoro.state import SOCK_FILE, read_pid, read_state
 
@@ -156,34 +156,80 @@ def resume() -> None:
 
 
 _MAX_TITLE_WIDTH = 60
+_LABEL_WIDTH = 11
+_BAR_WIDTH = 24
+
+_SESSION_LABELS = {
+    "work": "WORK",
+    "short_break": "SHORT BREAK",
+    "long_break": "LONG BREAK",
+}
+_SESSION_COLORS = {
+    "work": "green",
+    "short_break": "yellow",
+    "long_break": "cyan",
+}
+
+
+def _label(text: str) -> str:
+    return click.style(f"{text:<{_LABEL_WIDTH}}", bold=True)
+
+
+def _progress_bar(remaining: int, total: int, width: int = _BAR_WIDTH) -> str:
+    ratio = 0.0 if total <= 0 else 1 - (remaining / total)
+    ratio = min(1.0, max(0.0, ratio))
+    filled = round(width * ratio)
+    bar = "#" * filled + "-" * (width - filled)
+    return f"[{bar}] {round(ratio * 100):3d}%"
 
 
 def _render_status(state: dict) -> list[str]:
-    stype = state["session_type"].replace("_", " ").title()
-    remaining = _fmt_time(state["seconds_remaining"])
-    music = "yes" if state["music_playing"] else "no"
-    done = state["total_work_sessions"]
+    stype_raw = state["session_type"]
+    stype_label = _SESSION_LABELS.get(stype_raw, stype_raw.replace("_", " ").upper())
+    color = _SESSION_COLORS.get(stype_raw, "white")
     paused = state.get("paused", False)
-    lines = [
-        f"Session:   {stype}{' (paused)' if paused else ''}",
-        f"Remaining: {remaining}",
-        f"Music:     {music}",
-    ]
+
+    header = click.style(stype_label, fg=color, bold=True)
+    if paused:
+        header += click.style("  (PAUSED)", fg="yellow", bold=True)
+
+    remaining = state["seconds_remaining"]
+    total = state.get("session_total_seconds")
+    # A missing key (state.json from a daemon started before this field
+    # existed) is not the same as a legitimate 0 -- treating it as "use
+    # remaining as the total" would freeze the bar at 0% for the rest of
+    # that daemon's life instead of just admitting progress is unknown.
+    bar = _progress_bar(remaining, total) if total is not None else "(restart the daemon to see progress: 'pomodoro restart')"
+    time_line = f"{_label('Time left')}{_fmt_time(remaining)}   {bar}"
+
+    # Match the rule's width to the widest line (the time/progress-bar row)
+    # so it visually spans the whole block, ending flush with the "%".
+    lines = [header, "-" * len(click.unstyle(time_line)), time_line]
+
+    music = "yes" if state["music_playing"] else "no"
+    lines.append(f"{_label('Music')}{music}")
+
     song_title = state.get("song_title")
     if state["music_playing"] and song_title:
         if len(song_title) > _MAX_TITLE_WIDTH:
             song_title = song_title[: _MAX_TITLE_WIDTH - 3] + "..."
-        lines.append(f"Playing:   {song_title}")
-    lines.append(f"Completed: {done} work session(s)")
+        lines.append(f"{_label('Playing')}{song_title}")
+
+    done = state["total_work_sessions"]
+    lines.append(f"{_label('Completed')}{done} work session(s)")
+
     if not state.get("mpv_available", True):
-        lines.append("Warning:   mpv not found -- music disabled (install mpv)")
+        lines.append(click.style("Warning: mpv not found -- music disabled (install mpv)", fg="red"))
     return lines
 
 
 def _watch_loop(state: dict) -> None:
-    """Redraw status in place every second until 'q' or Ctrl+C is pressed."""
-    click.echo("Watching status -- press q to quit (Ctrl+C also works).")
+    """Redraw status in place every second until 'q' or Ctrl+C is pressed.
 
+    'q' just exits the view, leaving the daemon running. Ctrl+C stops the
+    daemon too, matching the usual expectation that interrupting a
+    foreground process ends it.
+    """
     interactive = sys.stdin.isatty()
     old_settings = None
     fd = sys.stdin.fileno() if interactive else None
@@ -196,7 +242,7 @@ def _watch_loop(state: dict) -> None:
         while True:
             if prev_line_count:
                 sys.stdout.write(f"\033[{prev_line_count}A\r\033[J")
-            lines = _render_status(state)
+            lines = ["", "Watch Mode: Press q to quit", ""] + _render_status(state)
             for line in lines:
                 click.echo(line)
             prev_line_count = len(lines)
@@ -217,6 +263,9 @@ def _watch_loop(state: dict) -> None:
             state = read_state() or state
     except KeyboardInterrupt:
         click.echo("")
+        if _daemon_running():
+            result = _send("stop")
+            click.echo("Stopped." if result == "ok" else "Failed to stop daemon.", err=result != "ok")
     finally:
         if old_settings is not None:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
@@ -245,14 +294,14 @@ def status(watch: bool) -> None:
 
 @main.group()
 def playlist() -> None:
-    """Manage the study playlist."""
+    """Manage study playlists. Commands below act on the active playlist."""
 
 
 @playlist.command("add")
 @click.argument("url")
 @click.argument("name", required=False)
 def playlist_add(url: str, name: str | None) -> None:
-    """Add a YouTube URL to the playlist. Fetches the title if NAME is omitted."""
+    """Add a YouTube URL to the active playlist. Fetches the title if NAME is omitted."""
     if name is None:
         name = fetch_title(url)
         if name is None:
@@ -261,15 +310,15 @@ def playlist_add(url: str, name: str | None) -> None:
     config = Config.load()
     add_song(config.songs, Song(url=url, name=name))
     config.save()
-    click.echo(f"Added '{name}'. Playlist has {len(config.song_urls)} song(s).")
+    click.echo(f"Added '{name}' to '{config.active_playlist}'. Playlist has {len(config.song_urls)} song(s).")
 
 
 @playlist.command("list")
 def playlist_list() -> None:
-    """List all songs in the playlist."""
+    """List all songs in the active playlist."""
     config = Config.load()
     if not config.songs:
-        click.echo("Playlist is empty.")
+        click.echo(f"Playlist '{config.active_playlist}' is empty.")
         return
     for i, song in enumerate(config.songs):
         if song is None:
@@ -280,19 +329,65 @@ def playlist_list() -> None:
 
 @playlist.command("edit")
 def playlist_edit() -> None:
-    """Interactively browse, reorder, and delete songs."""
+    """Interactively browse, reorder, and delete songs.
+
+    Left/Right switches between playlists (a new one is created the first
+    time you add a song to an empty, not-yet-named slot); Enter renames
+    the playlist you're viewing.
+    """
     config = Config.load()
-    run_editor(config)
+    try:
+        run_editor(config)
+    except KeyboardInterrupt:
+        click.echo("Exited.")
+
+    config = Config.load()
+    if config.active_playlist not in config.playlists:
+        click.echo(
+            f"Note: '{config.active_playlist}' doesn't exist yet -- it will be "
+            f"created the next time you run 'pomodoro playlist add'. Reopen the "
+            f"editor and switch playlists with Left/Right if that wasn't intended."
+        )
 
 
 @playlist.command("shuffle")
 @click.argument("state", type=click.Choice(["on", "off"]))
 def playlist_shuffle(state: str) -> None:
-    """Enable or disable shuffle for the playlist."""
+    """Enable or disable shuffle for the active playlist."""
     config = Config.load()
     config.shuffle = state == "on"
     config.save()
     click.echo(f"Shuffle: {state}")
+
+
+@playlist.command("all")
+def playlist_all() -> None:
+    """List all named playlists, marking the active one."""
+    config = Config.load()
+    for name, songs in config.playlists.items():
+        marker = "*" if name == config.active_playlist else " "
+        click.echo(f"{marker} {name}  ({len(filled(songs))} song(s))")
+
+
+@playlist.command("delete")
+@click.argument("name")
+def playlist_delete(name: str) -> None:
+    """Delete a named playlist."""
+    config = Config.load()
+    if name not in config.playlists:
+        click.echo(f"Unknown playlist '{name}'.", err=True)
+        sys.exit(1)
+    if len(config.playlists) == 1:
+        click.echo("Cannot delete the only playlist.", err=True)
+        sys.exit(1)
+    del config.playlists[name]
+    if config.active_playlist == name:
+        config.active_playlist = next(iter(config.playlists))
+        config.save()
+        click.echo(f"Deleted '{name}'. Switched to '{config.active_playlist}'.")
+    else:
+        config.save()
+        click.echo(f"Deleted '{name}'.")
 
 
 @main.command()
@@ -351,7 +446,12 @@ def config_show() -> None:
     click.echo(f"shuffle       {'on' if cfg.shuffle else 'off'}")
     click.echo(f"loop          {'on' if cfg.loop else 'off'}")
     click.echo(f"watch         {'on' if cfg.watch else 'off'}")
-    click.echo(f"songs         {len(cfg.song_urls)}")
+    # Count playlists before reading song_urls -- song_urls reads the
+    # `songs` property, which lazily materializes a not-yet-created
+    # active_playlist as a side effect, and evaluating it first would
+    # inflate this count by the entry it just created.
+    playlist_count = len(cfg.playlists)
+    click.echo(f"playlist      {cfg.active_playlist} ({len(cfg.song_urls)} song(s), {playlist_count} playlist(s) total)")
 
 
 _CONFIG_KEYS = {

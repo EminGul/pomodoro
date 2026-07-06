@@ -67,8 +67,8 @@ pomodoro start --work 30 --short-break 5
 # Check what is running
 pomodoro status
 
-# Redraw status in place every second; shows the currently playing song
-# and quits on 'q' (Ctrl+C also works)
+# Redraw status in place every second; shows the currently playing song.
+# 'q' exits the view; Ctrl+C also stops the daemon.
 pomodoro status --watch
 
 # Enter --watch mode automatically after every 'pomodoro start'
@@ -88,24 +88,32 @@ pomodoro stop
 ### Playlist
 
 ```
-pomodoro playlist add <youtube-url> [name]   # add a track (fetches the title if name is omitted)
-pomodoro playlist list                       # show playlist slots with indices
-pomodoro playlist edit                       # interactively browse, reorder, and delete songs
+pomodoro playlist add <youtube-url> [name]   # add a track to the active playlist (fetches the title if name is omitted)
+pomodoro playlist list                       # show the active playlist's slots with indices
+pomodoro playlist edit                       # interactively browse, reorder, rename, and switch between playlists
 pomodoro playlist shuffle on                 # randomise playback order
+pomodoro playlist all                        # list all named playlists, marking the active one
+pomodoro playlist delete <name>              # delete a playlist (not the last one)
 
 pomodoro loop on                    # loop the playlist
 pomodoro volume 80                  # set volume (0-100)
 ```
 
-`pomodoro playlist edit` opens a full-screen table of the playlist's song
-slots, ten per page.
+Songs live in named playlists; `pomodoro start` always plays the active one.
+A single `default` playlist exists until you create more from inside `playlist edit`.
+
+`pomodoro playlist edit` opens a full-screen table of the active playlist's
+song slots, ten per page.
 Slots that have not been filled show as `[None]`; you can only page forward
 into a page that has at least one filled slot.
 
-- Up/Down arrows move the cursor (and page at the top/bottom row).
+- Left/Right arrows switch between playlists, wrapping from the last one back to the first.
+- Going right past the last real playlist previews a new, not-yet-created playlist; it only becomes real once you add a song to it.
+- Up/Down arrows move the song cursor (and page at the top/bottom row).
 - Del removes the highlighted song, leaving its slot empty.
-- Enter toggles swap mode: Space marks a slot (shown with a leading `>`),
-  and Space on a second slot swaps the two; Enter exits swap mode.
+- Space marks a slot (shown with a leading `>`); Space on a second slot swaps the two.
+- Esc clears a pending selection.
+- Enter renames the playlist you're viewing; type the new name and press Enter to confirm, or Esc to cancel.
 - `q` quits the editor.
 
 ## TODO
@@ -113,6 +121,6 @@ into a page that has at least one filled slot.
 - [x] ~~Better editing for pomodoro intervals (`pomodoro config show` / `pomodoro config set <key> <value>`, changes apply at next session boundary or immediately via `pomodoro restart`)~~
 - [x] ~~Live status watch (`pomodoro status --watch` that redraws in place)~~
 - [x] ~~Better playlist editing (`pomodoro playlist edit`: paginated slot table, reorder via swap mode, delete with Del)~~
-- [ ] Support for multiple named playlists
+- [x] ~~Support for multiple named playlists (create, switch, and rename from inside `pomodoro playlist edit`; `pomodoro playlist all`/`delete` for listing and removal)~~
 - [ ] Sound notifications (short chime on session end, alongside existing
       visual/bell notifications)

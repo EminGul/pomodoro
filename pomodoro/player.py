@@ -237,11 +237,17 @@ class Player:
         if self.is_playing:
             self._mpv_command({"command": ["set_property", "pause", False]})
 
-    def current_title(self) -> str | None:
-        """The title of the track mpv is currently playing, or None."""
+    def current_path(self) -> str | None:
+        """The URL/path of the track mpv is currently playing, or None.
+
+        Unlike `media-title` (which starts out as the raw URL and only
+        becomes the real title once the ytdl hook resolves it), `path` is
+        the exact string passed on the command line, so it is available
+        immediately and can be looked up against the playlist's own names.
+        """
         if not self.is_playing:
             return None
-        return self._get_property("media-title")
+        return self._get_property("path")
 
     def _get_property(self, prop: str) -> str | None:
         request_id = 1

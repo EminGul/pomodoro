@@ -9,6 +9,7 @@ import time
 from pomodoro.config import Config
 from pomodoro.notify import Notifier, detect
 from pomodoro.player import Player
+from pomodoro.playlist import filled
 from pomodoro.state import SOCK_FILE, clear_state, write_pid, write_state
 from pomodoro.timer import SessionType, TimerState
 
@@ -29,6 +30,7 @@ class Daemon:
         self._lock = threading.Lock()
         self._current_song: str | None = None
         self._last_song_query = 0.0
+        self._song_names: dict[str, str] = {}
 
     def run(self) -> None:
         write_pid(os.getpid())
@@ -80,14 +82,19 @@ class Daemon:
         if now - self._last_song_query < _SONG_POLL_INTERVAL:
             return
         self._last_song_query = now
-        title = self._player.current_title()
-        if title:
-            self._current_song = title
+        path = self._player.current_path()
+        if path:
+            self._current_song = self._song_names.get(path, path)
 
     def _start_session(self) -> None:
         started_new_playback = False
         if self._config.song_urls:
             if self._state.session_type == SessionType.WORK:
+                # Rebuilt every time a work session starts or resumes (not
+                # just on a fresh mpv spawn) so a playlist edit made during a
+                # break - where mpv is only paused, not stopped - is picked
+                # up instead of showing stale names for the rest of the run.
+                self._song_names = {s.url: s.name for s in filled(self._config.songs)}
                 if self._player.is_playing:
                     self._player.resume_playback()
                 else:
